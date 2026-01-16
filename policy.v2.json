@@ -1,0 +1,12 @@
+{
+  "schema": "wfsl.eco.policy.v2",
+  "policyName": "eco-engine-local-policy",
+  "policyVersion": "2.0.0",
+  "denyByDefault": true,
+  "allowedActions": {
+    "snapshot.v1": true
+  },
+  "outDirAllowedRoots": [
+    "C:\\Users\\Paul Wynn\\eco-engine-v1\\proof"
+  ]
+}

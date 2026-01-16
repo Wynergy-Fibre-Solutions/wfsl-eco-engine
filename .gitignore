@@ -1,0 +1,9 @@
+# Runtime proof artefacts
+proof/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# PowerShell history
+PSReadLine/
