@@ -1,0 +1,53 @@
+name: Verify Deterministic Proof
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  verify-proof:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup PowerShell
+        shell: pwsh
+        run: |
+          $PSVersionTable.PSVersion
+
+      - name: Prepare proof directory
+        shell: pwsh
+        run: |
+          if (Test-Path ".\proof") { Remove-Item ".\proof" -Recurse -Force }
+          New-Item -ItemType Directory -Path ".\proof" | Out-Null
+
+      - name: Seal policy
+        shell: pwsh
+        run: |
+          Import-Module ".\lib\policy.ps1"
+          Write-PolicyV2 -PolicyPath ".\policy.v2.json" -OutDir ".\proof"
+
+      - name: Seal snapshot (deterministic)
+        shell: pwsh
+        run: |
+          . ".\lib\snapshot.ps1"
+          $policySha = (Get-Content -Raw ".\proof\policy.sha256").Trim()
+          $ts = "1970-01-01T00:00:00.0000000Z"
+          Write-Snapshot -ProofDir ".\proof" -PolicySha256 $policySha -TimestampUtc $ts
+
+      - name: Seal evidence
+        shell: pwsh
+        run: |
+          . ".\lib\evidence.ps1"
+          $snap = (Get-Content -Raw ".\proof\snapshot.sha256").Trim()
+          $pol  = (Get-Content -Raw ".\proof\policy.sha256").Trim()
+          Write-Evidence -ProofDir ".\proof" -SnapshotSha256 $snap -PolicySha256 $pol
+
+      - name: Verify proof (authoritative)
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File ".\verify\wfsl-verify.ps1" -ProofDir ".\proof" -RequireEvidence
