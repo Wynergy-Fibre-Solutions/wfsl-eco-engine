@@ -51,3 +51,10 @@ jobs:
         shell: pwsh
         run: |
           pwsh -NoProfile -ExecutionPolicy Bypass -File ".\verify\wfsl-verify.ps1" -ProofDir ".\proof" -RequireEvidence
+
+      - name: Upload proof bundle (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wfsl-proof
+          path: proof
