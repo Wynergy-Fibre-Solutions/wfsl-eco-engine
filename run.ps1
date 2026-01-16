@@ -14,6 +14,7 @@ $ErrorActionPreference = "Stop"
 
 . "$PSScriptRoot\lib\guard.ps1"
 . "$PSScriptRoot\lib\evidence.ps1"
+. "$PSScriptRoot\lib\authority.ps1"
 
 Require-ExplicitInvocation -InvocationName $MyInvocation.InvocationName
 
@@ -21,6 +22,13 @@ Require-ExplicitInvocation -InvocationName $MyInvocation.InvocationName
 $policyPath = Join-Path $PSScriptRoot "policy.v2.json"
 if (-not (Test-Path $policyPath)) {
   throw "POLICY DENY: policy.v2.json missing. Refusing to run."
+}
+
+# Authority connector (detached signature, if present)
+$sigPath = Join-Path $PSScriptRoot "policy.v2.json.sig"
+$pubPath = Join-Path $PSScriptRoot "authority\public.authority.es256.json"
+if (Test-Path $sigPath) {
+  Verify-DetachedPolicySignature -PolicyPath $policyPath -SignaturePath $sigPath -PublicKeyPath $pubPath
 }
 
 $policyRaw = Get-Content -Raw $policyPath
@@ -133,7 +141,6 @@ if ($EmitEvidence) {
 Write-Host "Execution completed successfully."
 Write-Host "Proof updated."
 Write-Host "Policy enforced."
-if ($EmitEvidence) {
-  Write-Host "Evidence emitted."
-}
+if (Test-Path $sigPath) { Write-Host "Policy signature verified." }
+if ($EmitEvidence) { Write-Host "Evidence emitted." }
 exit 0

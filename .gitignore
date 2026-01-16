@@ -1,6 +1,12 @@
 # Runtime proof artefacts
 proof/
 
+# Authority private keys (must never be committed)
+authority/private.*
+authority/*.private.*
+authority/*.key
+authority/*.pem
+
 # OS noise
 .DS_Store
 Thumbs.db
