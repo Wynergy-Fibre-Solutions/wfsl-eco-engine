@@ -1,354 +1,260 @@
-Cross-Organisation Verification
+param(
 
-WFSL Internal Boundary Document
+&nbsp; \[Parameter(Mandatory = $false)]
 
-1\. Why Cross-Organisation Verification Exists
+&nbsp; \[string]$ProofDir = ".\\proof",
 
 
 
-Trust confined to a single organisation is fragile.
+&nbsp; \[Parameter(Mandatory = $false)]
 
+&nbsp; \[switch]$RequireEvidence,
 
 
-WFSL systems are designed to allow independent parties to verify claims without trusting each other and without trusting WFSL.
 
+&nbsp; \[Parameter(Mandatory = $false)]
 
+&nbsp; \[switch]$RequirePolicySignature
 
-Verification must survive:
+)
 
 
 
-Organisational boundaries
+Set-StrictMode -Version Latest
 
+$ErrorActionPreference = "Stop"
 
 
-Commercial disputes
 
+function Pass(\[string]$Msg) { Write-Host ("PASS: " + $Msg) }
 
+function Fail(\[string]$Msg) { throw ("FAIL: " + $Msg) }
 
-Regulatory scrutiny
 
 
+function Read-Text(\[string]$Path) {
 
-Vendor absence
+&nbsp; if (-not (Test-Path -LiteralPath $Path)) { Fail ("missing file: " + $Path) }
 
+&nbsp; return (Get-Content -LiteralPath $Path -Raw)
 
+}
 
-2\. Definition
 
 
+function Get-Sha256HexFromBytes(\[byte\[]]$Bytes) {
 
-Cross-Organisation Verification is the ability for one party to validate another party’s assertions using only:
+&nbsp; $sha = \[System.Security.Cryptography.SHA256]::Create()
 
+&nbsp; try {
 
+&nbsp;   $hash = $sha.ComputeHash($Bytes)
 
-Public artefacts
+&nbsp;   return (\[BitConverter]::ToString($hash).Replace("-", "")).ToLowerInvariant()
 
+&nbsp; }
 
+&nbsp; finally {
 
-Deterministic verification rules
+&nbsp;   $sha.Dispose()
 
+&nbsp; }
 
+}
 
-Shared cryptographic standards
 
 
+function Get-Utf8NoBomBytes(\[string]$Text) {
 
-No private channels are required.
+&nbsp; $enc = New-Object System.Text.UTF8Encoding($false)
 
-No bilateral trust is assumed.
+&nbsp; return $enc.GetBytes($Text)
 
+}
 
 
-3\. Zero Trust Between Parties
 
+function Verify-FileHash(\[string]$DataPath, \[string]$HashPath, \[string]$Label) {
 
+&nbsp; $data = Read-Text $DataPath
 
-WFSL assumes:
+&nbsp; $expected = (Read-Text $HashPath).Trim()
 
+&nbsp; $actual = Get-Sha256HexFromBytes (Get-Utf8NoBomBytes $data)
 
+&nbsp; if ($expected -ne $actual) { Fail ("$Label sha256 mismatch. Expected=$expected Actual=$actual") }
 
-Organisations do not trust each other
+&nbsp; Pass ("$Label integrity verified")
 
+&nbsp; return $actual
 
+}
 
-Interests may conflict
 
 
+function Resolve-Full(\[string]$Path) {
 
-Incentives may diverge
+&nbsp; return \[System.IO.Path]::GetFullPath($Path)
 
+}
 
 
-Verification must remain valid under these conditions.
 
+$proofFull = Resolve-Full $ProofDir
 
 
-Mutual distrust is not a failure mode.
 
-It is the operating environment.
+$snapshotJson = Join-Path $proofFull "snapshot.json"
 
+$snapshotSha  = Join-Path $proofFull "snapshot.sha256"
 
+$policySha    = Join-Path $proofFull "policy.sha256"
 
-4\. Proof Portability
 
 
+$evidenceJson = Join-Path $proofFull "evidence.v3.json"
 
-Proof artefacts must be:
+$evidenceSha  = Join-Path $proofFull "evidence.v3.sha256"
 
 
 
-Self-describing
+\# 1) Snapshot integrity
 
+$computedSnapshotSha = Verify-FileHash -DataPath $snapshotJson -HashPath $snapshotSha -Label "snapshot"
 
 
-Cryptographically bound
 
+\# 2) Policy identity integrity (policy.sha256 must exist and be valid hex)
 
+if (-not (Test-Path -LiteralPath $policySha)) {
 
-Independently verifiable
+&nbsp; Fail "policy.sha256 missing"
 
+}
 
 
-Free of vendor-specific dependencies
 
+$policyId = (Read-Text $policySha).Trim()
 
+if ($policyId -notmatch '^\[a-f0-9]{64}$') { Fail "policy.sha256 is not a valid sha256 hex string" }
 
-Any party with the artefact and the verification rules can validate it.
+Pass "policy identity loaded from proof"
 
 
 
-WFSL presence is not required.
+\# 3) Evidence optional / required
 
+if ($RequireEvidence) {
 
+&nbsp; if (-not (Test-Path -LiteralPath $evidenceJson)) { Fail "evidence required but evidence.v3.json missing" }
 
-5\. No Shared Secrets
+&nbsp; if (-not (Test-Path -LiteralPath $evidenceSha))  { Fail "evidence required but evidence.v3.sha256 missing" }
 
 
 
-Cross-organisation verification prohibits:
+&nbsp; $computedEvidenceSha = Verify-FileHash -DataPath $evidenceJson -HashPath $evidenceSha -Label "evidence"
 
 
 
-Shared private keys
+&nbsp; # Evidence content consistency checks (minimal, deterministic)
 
+&nbsp; $evRaw = Read-Text $evidenceJson
 
+&nbsp; try { $ev = $evRaw | ConvertFrom-Json -ErrorAction Stop } catch { Fail "evidence.v3.json is not valid JSON" }
 
-Embedded credentials
 
 
+&nbsp; if ($ev.schema -ne "wfsl.eco.evidence.v3") { Fail "evidence schema mismatch" }
 
-Vendor-managed trust channels
 
 
+&nbsp; if ($ev.inputs.snapshotSha256 -ne $computedSnapshotSha) {
 
-Hidden verification services
+&nbsp;   Fail ("evidence snapshotSha256 does not match snapshot proof. Evidence=" + $ev.inputs.snapshotSha256 + " Proof=" + $computedSnapshotSha)
 
+&nbsp; }
 
 
-Trust is derived from artefacts, not relationships.
 
+&nbsp; if ($ev.inputs.policySha256 -ne $policyId) {
 
+&nbsp;   Fail ("evidence policySha256 does not match policy.sha256. Evidence=" + $ev.inputs.policySha256 + " Proof=" + $policyId)
 
-6\. Authority Independence
+&nbsp; }
 
 
 
-Each organisation:
+&nbsp; if ($ev.evidenceSha256 -ne $computedEvidenceSha) {
 
+&nbsp;   Fail ("evidence self sha mismatch. EvidenceField=" + $ev.evidenceSha256 + " Computed=" + $computedEvidenceSha)
 
+&nbsp; }
 
-Issues its own authority
 
 
+&nbsp; Pass "evidence integrity verified"
 
-Defines its own policies
+}
 
+else {
 
+&nbsp; # If evidence exists, we do not fail. We remain permissive unless required.
 
-Controls its own revocation
+&nbsp; if ((Test-Path -LiteralPath $evidenceJson) -or (Test-Path -LiteralPath $evidenceSha)) {
 
+&nbsp;   Pass "evidence present (optional)"
 
+&nbsp; }
 
-Verification checks consistency, not correctness.
+&nbsp; else {
 
+&nbsp;   Pass "evidence not present (optional)"
 
+&nbsp; }
 
-WFSL does not resolve disputes between authorities.
+}
 
 
 
-7\. Time and Revocation Awareness
+\# 4) Policy signature (optional, can be required)
 
+$policySig = Join-Path (Resolve-Full ".") "policy.v2.json.sig"
 
+$pubKey    = Join-Path (Resolve-Full ".") "authority\\public.authority.es256.json"
 
-Verification must account for:
 
 
+if ($RequirePolicySignature) {
 
-Temporal validity windows
+&nbsp; if (-not (Test-Path -LiteralPath $policySig)) { Fail "policy signature required but policy.v2.json.sig missing" }
 
+&nbsp; if (-not (Test-Path -LiteralPath $pubKey))    { Fail "policy signature required but public authority key missing" }
 
+&nbsp; Pass "policy signature required (file presence satisfied)"
 
-Revocation status at the time of execution
+}
 
+else {
 
+&nbsp; if ((Test-Path -LiteralPath $policySig) -and (Test-Path -LiteralPath $pubKey)) {
 
-Evidence ageing
+&nbsp;   Pass "policy signature present (optional)"
 
+&nbsp; }
 
+&nbsp; else {
 
-An artefact valid yesterday may be invalid today.
+&nbsp;   Pass "policy signature not present (optional)"
 
+&nbsp; }
 
+}
 
-Verification always evaluates at a point in time.
 
 
+Write-Host "OK: verification completed"
 
-8\. Failure Is a Valid Outcome
+exit 0
 
 
-
-Verification may legitimately result in:
-
-
-
-Inconclusive
-
-
-
-Invalid
-
-
-
-Expired
-
-
-
-Revoked
-
-
-
-Unverifiable
-
-
-
-WFSL systems treat failure as informative, not exceptional.
-
-
-
-9\. Responsibility Boundary
-
-
-
-Issuers are responsible for what they assert
-
-
-
-Verifiers are responsible for how they interpret results
-
-
-
-WFSL is responsible only for correct verification mechanics
-
-
-
-WFSL does not certify truth.
-
-
-
-10\. Why This Matters
-
-
-
-This layer enables:
-
-
-
-Regulator independence
-
-
-
-Auditor neutrality
-
-
-
-Supply-chain verification
-
-
-
-Cross-border trust
-
-
-
-Long-term survivability
-
-
-
-It also prevents WFSL from becoming a central authority.
-
-
-
-11\. Explicit Non-Goals
-
-
-
-WFSL does not provide:
-
-
-
-Trust brokering
-
-
-
-Dispute resolution
-
-
-
-Arbitration
-
-
-
-Reputation scoring
-
-
-
-Consensus enforcement
-
-
-
-Those belong outside the system.
-
-
-
-12\. Status
-
-
-
-This boundary is stable.
-
-
-
-It changes only if:
-
-
-
-Cryptographic verification becomes unreliable
-
-
-
-Deterministic verification collapses
-
-
-
-Independent verification becomes impossible
-
-
-
-Until then, verification remains decentralised.
-
-
-
-End of document.
 
