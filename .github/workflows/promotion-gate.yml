@@ -1,0 +1,38 @@
+name: WFSL Promotion Gate
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  gate:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout catalogue ledger
+        uses: actions/checkout@v4
+        with:
+          repository: Wynergy-Fibre-Solutions/wfsl-catalogue-migration
+          path: ledger
+
+      - name: Verify promotion decision
+        shell: pwsh
+        run: |
+          $decisionPath = "ledger\verification\DECISION_TRANSFER_APPROVED.json"
+
+          if (-not (Test-Path $decisionPath)) {
+            throw "Missing promotion decision artefact"
+          }
+
+          $d = Get-Content $decisionPath | ConvertFrom-Json
+
+          if ($d.decision -ne "TRANSFER_APPROVED") {
+            throw "Promotion not approved"
+          }
+
+          if ($d.subject -ne "wfsl-eco-engine") {
+            throw "Decision subject mismatch"
+          }
+
+          Write-Host "Promotion gate passed"
