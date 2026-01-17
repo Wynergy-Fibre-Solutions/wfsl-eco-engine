@@ -21,7 +21,7 @@ jobs:
         run: |
           set -e
 
-          EXPECTED_HASH="C629832FDFA33D79A9B9A663AB31E3866D1117CE1DF326604296E1C839"
+          EXPECTED_HASH="PUT_FULL_SHA256_HERE"
 
           ACTUAL_HASH=$(sha256sum governance/verification/ATTESTATION_SCHEMA.md | awk '{print $1}')
 
