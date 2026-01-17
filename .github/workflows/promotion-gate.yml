@@ -20,34 +20,80 @@ jobs:
       - name: Verify frozen attestation schema (v1)
         run: |
           set -e
-
-          EXPECTED_HASH="PUT_FULL_SHA256_HERE"
-
+          EXPECTED_HASH="c629832fdfa33d79a9b9a663ab31e3866d1117ce1df326604296e1c839e0a204"
           ACTUAL_HASH=$(sha256sum governance/verification/ATTESTATION_SCHEMA.md | awk '{print $1}')
-
           if [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
             echo "ERROR: Frozen attestation schema hash mismatch"
             echo "Expected: $EXPECTED_HASH"
             echo "Actual:   $ACTUAL_HASH"
             exit 1
           fi
-
           echo "OK: Frozen attestation schema verified"
+
+      - name: Verify revocation schema hash (v1)
+        run: |
+          set -e
+          EXPECTED_HASH=$(cat governance/verification/REVOCATION_SCHEMA_V1.sha256 | tr -d '\r\n')
+          ACTUAL_HASH=$(sha256sum governance/verification/REVOCATION_SCHEMA_V1.md | awk '{print $1}')
+          if [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
+            echo "ERROR: Frozen revocation schema hash mismatch"
+            echo "Expected: $EXPECTED_HASH"
+            echo "Actual:   $ACTUAL_HASH"
+            exit 1
+          fi
+          echo "OK: Frozen revocation schema verified"
+
+      - name: Enforce revocation for this subject
+        run: |
+          set -e
+          SUBJECT="wfsl-eco-engine"
+          FILE="governance/verification/REVOCATION_${SUBJECT}.json"
+
+          if [ ! -f "$FILE" ]; then
+            echo "OK: No revocation file present for $SUBJECT"
+            exit 0
+          fi
+
+          STATUS=$(python -c "import json; print(json.load(open('$FILE','r',encoding='utf-8'))['status'])")
+          EFFECTIVE=$(python -c "import json; print(json.load(open('$FILE','r',encoding='utf-8'))['effective_at_utc'])")
+          EXPIRES=$(python -c "import json; d=json.load(open('$FILE','r',encoding='utf-8')); print(d.get('expires_at_utc',''))")
+
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          if [ "$STATUS" = "REINSTATED" ]; then
+            echo "OK: Subject reinstated"
+            exit 0
+          fi
+
+          if [ "$STATUS" != "REVOKED" ]; then
+            echo "ERROR: Invalid revocation status: $STATUS"
+            exit 1
+          fi
+
+          if [ "$NOW" \< "$EFFECTIVE" ]; then
+            echo "OK: Revocation not yet effective"
+            exit 0
+          fi
+
+          if [ -n "$EXPIRES" ] && [ "$NOW" \> "$EXPIRES" ]; then
+            echo "OK: Revocation expired"
+            exit 0
+          fi
+
+          echo "ERROR: SUBJECT REVOKED: $SUBJECT"
+          exit 1
 
       - name: Verify promotion decision (single or batch v1.1)
         run: |
           set -e
-
           if [ -f governance/verification/DECISION_BATCH_V11.json ]; then
             echo "OK: Batch promotion decision v1.1 present"
             exit 0
           fi
-
           if [ -f governance/verification/DECISION_TRANSFER_APPROVED.json ]; then
             echo "OK: Single promotion decision present"
             exit 0
           fi
-
           echo "ERROR: No valid promotion decision found"
           exit 1
 
