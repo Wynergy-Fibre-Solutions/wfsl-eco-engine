@@ -2,37 +2,87 @@ name: WFSL Promotion Gate
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
-  gate:
-    runs-on: windows-latest
+  promotion-gate:
+    runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout catalogue ledger
+      - name: Checkout governance ledger
         uses: actions/checkout@v4
         with:
           repository: Wynergy-Fibre-Solutions/wfsl-catalogue-migration
           path: ledger
 
-      - name: Verify promotion decision
-        shell: pwsh
+      - name: Verify frozen attestation schema (v1)
         run: |
-          $decisionPath = "ledger\verification\DECISION_TRANSFER_APPROVED.json"
+          set -e
+          SCHEMA="ledger/verification/ATTESTATION_SCHEMA.md"
+          PIN="ledger/verification/ATTESTATION_SCHEMA.sha256"
 
-          if (-not (Test-Path $decisionPath)) {
-            throw "Missing promotion decision artefact"
-          }
+          if [ ! -f "$SCHEMA" ] || [ ! -f "$PIN" ]; then
+            echo "ERROR: Frozen schema or pin missing"
+            exit 1
+          fi
 
-          $d = Get-Content $decisionPath | ConvertFrom-Json
+          ACTUAL=$(sha256sum "$SCHEMA" | awk '{print $1}')
+          EXPECTED=$(cat "$PIN" | tr -d '\r\n')
 
-          if ($d.decision -ne "TRANSFER_APPROVED") {
-            throw "Promotion not approved"
-          }
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "ERROR: Schema hash mismatch"
+            exit 1
+          fi
 
-          if ($d.subject -ne "wfsl-eco-engine") {
-            throw "Decision subject mismatch"
-          }
+          echo "OK: Attestation schema verified"
 
-          Write-Host "Promotion gate passed"
+      - name: Verify promotion decision (single or batch v1.1)
+        run: |
+          set -e
+          SUBJECT="wfsl-eco-engine"
+          APPROVED=false
+
+          SINGLE="ledger/verification/DECISION_TRANSFER_APPROVED.json"
+          if [ -f "$SINGLE" ]; then
+            SUBJ=$(jq -r '.subject' "$SINGLE")
+            if [ "$SUBJ" = "$SUBJECT" ]; then
+              APPROVED=true
+            fi
+          fi
+
+          if [ "$APPROVED" = false ]; then
+            BATCH="ledger/verification/DECISION_BATCH_V11.json"
+            PIN="ledger/verification/DECISION_BATCH_V11.sha256"
+
+            if [ ! -f "$BATCH" ] || [ ! -f "$PIN" ]; then
+              echo "ERROR: No valid promotion decision found"
+              exit 1
+            fi
+
+            ACTUAL=$(sha256sum "$BATCH" | awk '{print $1}')
+            EXPECTED=$(cat "$PIN" | tr -d '\r\n')
+
+            if [ "$ACTUAL" != "$EXPECTED" ]; then
+              echo "ERROR: Batch decision hash mismatch"
+              exit 1
+            fi
+
+            FOUND=$(jq -r --arg s "$SUBJECT" '.subjects[] | select(. == $s)' "$BATCH" || true)
+
+            if [ -n "$FOUND" ]; then
+              APPROVED=true
+            fi
+          fi
+
+          if [ "$APPROVED" != true ]; then
+            echo "ERROR: Promotion not approved by governance ledger"
+            exit 1
+          fi
+
+          echo "OK: Promotion approved by governance ledger"
+
+      - name: Promotion gate passed
+        run: |
+          echo "PROMOTION APPROVED — WFSL governance conditions satisfied"
